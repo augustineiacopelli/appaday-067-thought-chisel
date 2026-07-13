@@ -229,6 +229,31 @@ cursor:pointer;font-weight:500;border:none;
 }
 .btn-save{background:var(--amber);color:#121220}
 .btn-cancel{background:var(--card);color:var(--text);border:1px solid rgba(255,255,255,0.1) !important}
+.voice-row{display:flex;gap:8px;align-items:stretch}
+.voice-row select{flex:1;min-width:0}
+.btn-test{
+background:var(--card);color:var(--teal);
+border:1px solid var(--teal);border-radius:8px;
+padding:0 14px;font-family:'Inter',sans-serif;font-size:13px;
+cursor:pointer;white-space:nowrap;font-weight:500;
+transition:background 0.2s;
+}
+.btn-test:hover{background:rgba(74,154,143,0.12)}
+
+/* Export actions */
+.export-actions{
+display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;
+justify-content:center;
+}
+.export-btn{
+padding:10px 20px;border-radius:10px;
+border:1px solid rgba(255,255,255,0.12);
+background:var(--card);color:var(--text);
+font-family:'Inter',sans-serif;font-size:13px;font-weight:500;
+cursor:pointer;transition:all 0.2s;
+display:flex;align-items:center;gap:6px;
+}
+.export-btn:hover{border-color:var(--amber);color:var(--amber)}
 
 /* Unsupported message */
 .unsupported{
@@ -276,7 +301,10 @@ font-size:12px;color:var(--muted);
     </div>
     <div class="field">
       <label>Voice</label>
-      <select id="voiceSelect"><option value="">Loading voices...</option></select>
+      <div class="voice-row">
+        <select id="voiceSelect"><option value="">Loading voices...</option></select>
+        <button type="button" class="btn-test" onclick="testVoice()">Test</button>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
@@ -287,7 +315,7 @@ font-size:12px;color:var(--muted);
 
 <script>
 const CLAUDE_MODEL = 'claude-sonnet-4-6';
-const MAX_ROUNDS = 3;
+const MAX_ROUNDS = 5;
 
 /* ── State ── */
 let state = {
@@ -580,11 +608,43 @@ function render() {
     html += `
       <div class="welcome">
         <h2>Speak your idea.<br>Let it sharpen.</h2>
-        <p>Tap the mic and talk through whatever you're thinking. Thought Chisel will distill it, ask a follow-up, and refine across three rounds until your idea is razor-sharp.</p>
+        <p>Tap the mic and talk through whatever you're thinking. Thought Chisel will distill it, ask a follow-up, and refine across five rounds until your idea is razor-sharp.</p>
       </div>`;
   }
 
-  // Mic button (hidden when complete)
+  // Round cards first (so mic always appears below)
+  if (state.rounds.length > 0) {
+    html += '<div class="rounds-container">';
+    state.rounds.forEach((r, i) => {
+      const isFinal = (i === MAX_ROUNDS - 1) || (i === state.rounds.length - 1 && state.phase === 'complete');
+      html += `
+        <div class="round-card ${isFinal && state.phase === 'complete' ? 'final' : ''}">
+          <div class="round-label">${isFinal && state.phase === 'complete' ? '&#10022; Chiseled Idea' : 'Round ' + (i + 1)}</div>
+          <div class="transcript">"${escapeHtml(r.transcript)}"</div>
+          <div class="distilled">${escapeHtml(r.distilled)}</div>
+          ${r.question ? `<div class="question">&#8220;${escapeHtml(r.question)}&#8221;</div>` : ''}
+          ${r.tensions ? `<div class="tensions">${r.tensions.map(t => `<div class="tension-item">&#8226; ${escapeHtml(t)}</div>`).join('')}</div>` : ''}
+        </div>`;
+    });
+    html += '</div>';
+  }
+
+  // Live transcript (between cards and mic)
+  if (state.phase === 'listening') {
+    html += `<div class="live-transcript visible" id="liveTranscript">${state.liveTranscript || 'Listening...'}</div>`;
+  }
+
+  // Round dots
+  if (state.rounds.length > 0 || state.phase === 'listening') {
+    html += '<div class="round-indicator">';
+    for (let i = 0; i < MAX_ROUNDS; i++) {
+      const cls = i < state.rounds.length ? 'done' : (i === state.rounds.length ? 'current' : '');
+      html += `<div class="round-dot ${cls}"></div>`;
+    }
+    html += '</div>';
+  }
+
+  // Mic button below everything (hidden when complete)
   if (state.phase !== 'complete') {
     const isListening = state.phase === 'listening';
     const isSpeaking = state.phase === 'speaking';
@@ -602,7 +662,6 @@ function render() {
         </button>
       </div>`;
 
-    // Status
     let statusText = '';
     let statusClass = '';
     if (isListening) { statusText = 'Listening... tap to finish'; statusClass = 'active'; }
@@ -614,49 +673,27 @@ function render() {
     html += `<div class="status ${statusClass}">${statusText}</div>`;
   }
 
-  // Round dots
-  if (state.rounds.length > 0 || state.phase === 'listening') {
-    html += '<div class="round-indicator">';
-    for (let i = 0; i < MAX_ROUNDS; i++) {
-      const cls = i < state.rounds.length ? 'done' : (i === state.rounds.length ? 'current' : '');
-      html += `<div class="round-dot ${cls}"></div>`;
-    }
-    html += '</div>';
-  }
-
   // Error
   if (state.error) {
     html += `<div class="status error">${state.error}</div>`;
   }
 
-  // Live transcript
-  if (state.phase === 'listening') {
-    html += `<div class="live-transcript visible" id="liveTranscript">${state.liveTranscript || 'Listening...'}</div>`;
-  }
-
-  // Round cards
-  if (state.rounds.length > 0) {
-    html += '<div class="rounds-container">';
-    state.rounds.forEach((r, i) => {
-      const isFinal = (i === MAX_ROUNDS - 1) || (i === state.rounds.length - 1 && state.phase === 'complete');
-      html += `
-        <div class="round-card ${isFinal && state.phase === 'complete' ? 'final' : ''}">
-          <div class="round-label">${isFinal && state.phase === 'complete' ? '&#10022; Chiseled Idea' : 'Round ' + (i + 1)}</div>
-          <div class="transcript">"${escapeHtml(r.transcript)}"</div>
-          <div class="distilled">${escapeHtml(r.distilled)}</div>
-          ${r.question ? `<div class="question">&#8220;${escapeHtml(r.question)}&#8221;</div>` : ''}
-          ${r.tensions ? `<div class="tensions">${r.tensions.map(t => `<div class="tension-item">&#8226; ${escapeHtml(t)}</div>`).join('')}</div>` : ''}
-        </div>`;
-    });
-    html += '</div>';
-  }
-
-  // Start over button
+  // Complete state: export + start over
   if (state.phase === 'complete') {
-    html += `<button class="start-over-btn" onclick="startOver()">Start a new thought</button>`;
+    html += `
+      <div class="export-actions">
+        <button class="export-btn" onclick="emailSession()">&#9993; Email</button>
+        <button class="export-btn" onclick="saveSession()">&#8681; Save</button>
+        <button class="start-over-btn" onclick="startOver()">Start a new thought</button>
+      </div>`;
   }
 
   app.innerHTML = html;
+
+  // Auto-scroll to bottom so mic stays visible
+  if (state.rounds.length > 0 && state.phase !== 'complete') {
+    setTimeout(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }), 120);
+  }
 }
 
 function renderLiveTranscript() {
@@ -668,6 +705,55 @@ function escapeHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+/* ── Export ── */
+function buildSessionText() {
+  let text = 'THOUGHT CHISEL SESSION\n';
+  text += new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' }) + '\n';
+  text += '='.repeat(40) + '\n\n';
+
+  state.rounds.forEach((r, i) => {
+    const isFinal = (i === state.rounds.length - 1) && state.phase === 'complete';
+    if (isFinal) {
+      text += '*** CHISELED IDEA ***\n\n';
+      text += 'You said: "' + r.transcript + '"\n\n';
+      text += r.distilled + '\n\n';
+      if (r.tensions) {
+        text += 'Key dimensions:\n';
+        r.tensions.forEach(t => { text += '  - ' + t + '\n'; });
+      }
+    } else {
+      text += 'ROUND ' + (i + 1) + '\n\n';
+      text += 'You said: "' + r.transcript + '"\n\n';
+      text += 'Distilled: ' + r.distilled + '\n\n';
+      if (r.question) text += 'Follow-up: ' + r.question + '\n';
+      text += '\n' + '-'.repeat(30) + '\n\n';
+    }
+  });
+
+  return text;
+}
+
+function emailSession() {
+  const text = buildSessionText();
+  const subject = encodeURIComponent('Thought Chisel: ' + (state.rounds.length > 0 ? state.rounds[state.rounds.length - 1].distilled.substring(0, 60) : 'Session'));
+  const body = encodeURIComponent(text);
+  window.location.href = 'mailto:?subject=' + subject + '&body=' + body;
+}
+
+function saveSession() {
+  const text = buildSessionText();
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const dateStr = new Date().toISOString().slice(0, 10);
+  a.download = 'thought-chisel-' + dateStr + '.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 /* ── Settings ── */
@@ -712,6 +798,20 @@ function populateVoices() {
     });
 
   selectedVoiceURI = saved;
+}
+
+function testVoice() {
+  window.speechSynthesis.cancel();
+  const sel = document.getElementById('voiceSelect');
+  const u = new SpeechSynthesisUtterance('Here is what I sound like. Ready to chisel some thoughts?');
+  u.rate = 0.95;
+  u.pitch = 1.0;
+  const voices = window.speechSynthesis.getVoices();
+  if (sel.value) {
+    const v = voices.find(v => v.voiceURI === sel.value);
+    if (v) u.voice = v;
+  }
+  window.speechSynthesis.speak(u);
 }
 
 /* ── Init ── */
